@@ -6,11 +6,76 @@
    Path apne Uploads folder ke hisaab se rakho (secure_file_priv wala folder).
    NOTE: ERP tables ke column names assume kiye hain: DESCRIBE se match kar lena.
    =========================================================================== */
+/* ===========================================================================
+   BRONZE LAYER - FULL SCRIPT (MySQL): DDL + LOAD
+   PART A: tables banata hai (drop karta hai) -> sirf pehli baar ya structure badalne par.
+   PART B: CSV load -> jab bhi data reload karna ho.
+   =========================================================================== */
+
+-- ============================ PART A : DDL =================================
+CREATE DATABASE IF NOT EXISTS bronze;
+
+DROP TABLE IF EXISTS bronze.crm_cust_info;
+CREATE TABLE bronze.crm_cust_info (
+    cust_id              INT,
+    cust_key             VARCHAR(50),
+    cust_firstname       VARCHAR(50),
+    cust_lastname        VARCHAR(50),
+    cust_material_status VARCHAR(50),
+    cust_gndr            VARCHAR(50),
+    cust_create_data     DATE
+);
+
+DROP TABLE IF EXISTS bronze.crm_prd_info;
+CREATE TABLE bronze.crm_prd_info (
+    prd_id       INT,
+    prd_key      VARCHAR(50),
+    Prd_nm       VARCHAR(50),
+    prd_cost     INT,
+    prd_line     VARCHAR(50),
+    prd_start_dt DATETIME,
+    prd_end_dt   DATETIME
+);
+
+DROP TABLE IF EXISTS bronze.crm_sales_details;
+CREATE TABLE bronze.crm_sales_details (
+    sls_ord_num  VARCHAR(50),
+    slr_prd_key  VARCHAR(50),
+    sls_cust_id  INT,
+    sls_order_dt INT,
+    sls_ship_dt  INT,
+    sls_due_dt   INT,
+    sls_sales    INT,
+    sls_quantity INT,
+    sls_price    INT
+);
+
+DROP TABLE IF EXISTS bronze.erp_loc_a101;
+CREATE TABLE bronze.erp_loc_a101 (
+    cid   VARCHAR(50),
+    cntry VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS bronze.erp_cust_az12;
+CREATE TABLE bronze.erp_cust_az12 (
+    cid   VARCHAR(50),
+    bdate DATE,
+    gen   VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS bronze.erp_px_cat_g1v2;
+CREATE TABLE bronze.erp_px_cat_g1v2 (
+    id          VARCHAR(50),
+    cat         VARCHAR(50),
+    subcat      VARCHAR(50),
+    maintenance VARCHAR(50)      -- typo fix: pehle 'maintenace' tha
+);
+
+-- ============================ PART B : LOAD ================================
 USE bronze;
 SET @batch_start = NOW();
 SELECT '================ Loading Bronze Layer ================' AS msg;
 
--- ------------------------------ CRM ---------------------------------------
 -- 1) crm_cust_info
 SET @t = NOW();
 TRUNCATE TABLE crm_cust_info;
@@ -60,8 +125,7 @@ SET sls_cust_id  = NULLIF(TRIM(@cust), ''),
 SELECT 'crm_sales_details' AS table_name, COUNT(*) AS rows_loaded,
        TIMESTAMPDIFF(SECOND, @t, NOW()) AS seconds_taken FROM crm_sales_details;
 
--- ------------------------------ ERP ---------------------------------------
--- 4) erp_loc_a101   (cid, cntry)
+-- 4) erp_loc_a101
 SET @t = NOW();
 TRUNCATE TABLE erp_loc_a101;
 LOAD DATA INFILE 'C:/ProgramData/MySQL/MySQL Server 8.0/Uploads/loc_a101.csv'
@@ -74,7 +138,7 @@ SET cntry = NULLIF(TRIM(REPLACE(@cntry, '\r', '')), '');
 SELECT 'erp_loc_a101' AS table_name, COUNT(*) AS rows_loaded,
        TIMESTAMPDIFF(SECOND, @t, NOW()) AS seconds_taken FROM erp_loc_a101;
 
--- 5) erp_cust_az12  (cid, bdate, gen)
+-- 5) erp_cust_az12
 SET @t = NOW();
 TRUNCATE TABLE erp_cust_az12;
 LOAD DATA INFILE 'C:/ProgramData/MySQL/MySQL Server 8.0/Uploads/cust_az12.csv'
@@ -83,12 +147,12 @@ FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 LINES TERMINATED BY '\n'
 IGNORE 1 ROWS
 (cid, @bd, @gen)
-SET bdate = NULLIF(TRIM(@bd), ''),            -- agar dd-mm-yyyy ho to STR_TO_DATE(..., '%d-%m-%Y') lagao
+SET bdate = NULLIF(TRIM(@bd), ''),
     gen   = NULLIF(TRIM(REPLACE(@gen, '\r', '')), '');
 SELECT 'erp_cust_az12' AS table_name, COUNT(*) AS rows_loaded,
        TIMESTAMPDIFF(SECOND, @t, NOW()) AS seconds_taken FROM erp_cust_az12;
 
--- 6) erp_px_cat_g1v2 (id, cat, subcat, maintenance)
+-- 6) erp_px_cat_g1v2
 SET @t = NOW();
 TRUNCATE TABLE erp_px_cat_g1v2;
 LOAD DATA INFILE 'C:/ProgramData/MySQL/MySQL Server 8.0/Uploads/px_cat_g1v2.csv'
@@ -103,3 +167,11 @@ SELECT 'erp_px_cat_g1v2' AS table_name, COUNT(*) AS rows_loaded,
 
 SELECT CONCAT('Bronze load complete. Total time: ',
               TIMESTAMPDIFF(SECOND, @batch_start, NOW()), ' sec') AS msg;
+
+-- Final check (expected: 18494, 397, 60398, + ERP counts)
+SELECT 'crm_cust_info' AS t, COUNT(*) AS n FROM bronze.crm_cust_info
+UNION ALL SELECT 'crm_prd_info',      COUNT(*) FROM bronze.crm_prd_info
+UNION ALL SELECT 'crm_sales_details', COUNT(*) FROM bronze.crm_sales_details
+UNION ALL SELECT 'erp_loc_a101',      COUNT(*) FROM bronze.erp_loc_a101
+UNION ALL SELECT 'erp_cust_az12',     COUNT(*) FROM bronze.erp_cust_az12
+UNION ALL SELECT 'erp_px_cat_g1v2',   COUNT(*) FROM bronze.erp_px_cat_g1v2;
